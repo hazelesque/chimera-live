@@ -38,26 +38,29 @@ die() {
 
 # iso images for every platform
 
-echo "LIVE: base"
-if ! check_stamp live-base; then
-    MKLIVE_BUILD_DIR=build-live-base-$APK_ARCH ./mklive-image.sh -b base -- \
-        -a "$APK_ARCH" "$@" || die "failed to build live-base"
-    touch_stamp live-base
-fi
+make_iso() {
+    local type=$1
+    shift
+    echo "LIVE: $type"
+    if ! check_stamp live-${type}; then
+        MKLIVE_BUILD_DIR=build-live-${type}-$APK_ARCH ./mklive-image.sh -b $type -- \
+            -a "$APK_ARCH" "$@" || die "failed to build live-$type"
+        touch_stamp live-$type
+    fi
+}
 
-echo "LIVE: gnome"
-if ! check_stamp live-gnome; then
-    MKLIVE_BUILD_DIR=build-live-gnome-$APK_ARCH ./mklive-image.sh -b gnome -- \
-        -a "$APK_ARCH" "$@" || die "failed to build live-gnome"
-    touch_stamp live-gnome
-fi
+# base iso is always available
+make_iso base "$@"
 
-echo "LIVE: plasma"
-if ! check_stamp live-plasma; then
-    MKLIVE_BUILD_DIR=build-live-plasma-$APK_ARCH ./mklive-image.sh -b plasma -- \
-        -a "$APK_ARCH" "$@" || die "failed to build live-plasma"
-    touch_stamp live-plasma
-fi
+case "$APK_ARCH" in
+    ppc|ppc64)
+        # bug endian won't support desktops without manual intervention
+        ;;
+    *)
+        make_iso gnome "$@"
+        make_iso plasma "$@"
+        ;;
+esac
 
 # bootstrap and full rootfses for every target
 
