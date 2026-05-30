@@ -1,0 +1,8 @@
+timeout: 0
+serial: yes
+
+/Chimera Linux - @@KERNVER@@ (serial)
+    protocol: linux
+    path: boot():/vmlinuz-@@KERNVER@@
+    cmdline: root=PARTUUID=@@ROOT_PARTUUID@@ rw console=hvc0
+    module_path: boot():/initrd.img-@@KERNVER@@
