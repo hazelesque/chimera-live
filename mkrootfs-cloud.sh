@@ -46,7 +46,8 @@ limine \
 cloud-init cloud-init-dinit \
 python-jinja2 \
 openssh openssh-dinit \
-dhcpcd dhcpcd-dinit \
+ifupdown-ng ifupdown-ng-dinit \
+dhcpcd \
 chrony chrony-dinit \
 acpid acpid-dinit \
 qemu-guest-agent qemu-guest-agent-dinit \

@@ -84,7 +84,7 @@ ESP_VOLID_FIXED=cafebabe
 # Service-name parameterisation per plan open item #1 — adjust if
 # any package's dinit service name changes upstream.  All names
 # verified against the relevant -dinit subpackages at plan time.
-DINIT_SERVICES_COMMON="sshd dhcpcd chronyd acpid qemu-ga \
+DINIT_SERVICES_COMMON="sshd ifupdown-ng chronyd acpid qemu-ga \
                       cloud-init-local cloud-init cloud-config cloud-final \
                       syslog-ng \
                       agetty"
@@ -321,6 +321,36 @@ EXTRA_GETTYS="/dev/tty1"
 EOF
         ;;
 esac
+
+# ---- step 13b: /etc/network/interfaces (ifupdown-ng baseline) ----
+#
+# ifupdown-ng's dinit service runs `ifquery --list -a` to enumerate
+# `auto`-flagged interfaces from /etc/network/interfaces.  Without
+# this file (or with no auto interfaces), the service exits cleanly
+# without bringing anything up.  Bake a baseline: loopback + DHCP
+# on eth0.
+#
+# eth0 (not enp1s0) is the right name because the limine templates
+# pass `net.ifnames=0` on the kernel cmdline, disabling predictable
+# interface naming.  Cleaner than chasing whatever predictable name
+# udev would compute for the virtio NIC.
+#
+# cloud-init may overwrite this on first boot if its network-config
+# renderer is configured for ifupdown-ng — that's fine; the baked
+# file just covers the dinit-startup-before-cloud-init window.
+
+msg "Writing baseline /etc/network/interfaces..."
+mkdir -p "${ROOT_DIR}/etc/network"
+cat > "${ROOT_DIR}/etc/network/interfaces" <<'EOF'
+# Baseline written by mkcloud.sh.  ifupdown-ng's dinit wrapper
+# enumerates auto-flagged interfaces from here.  cloud-init may
+# overwrite on first boot.
+auto lo
+iface lo inet loopback
+
+auto eth0
+iface eth0 inet dhcp
+EOF
 
 # ---- step 14: cloud-init datasource preference --------------------
 
