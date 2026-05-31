@@ -71,6 +71,13 @@ VARIANT=serial
 IMAGE_SIZE=8G
 OUT_FILE=
 COMPRESS=0
+# ESP_EXTRAS is a newline-separated list of "SRC[:DEST]" pairs.
+# Populated by repeated `-x` flags.  Each entry gets copied to
+# the ESP at /<DEST> (or /<basename SRC> if DEST omitted) during
+# step 16a.  Useful for dropping a rescue UKI, shellx64.efi
+# overrides, additional bootloader configs, etc. onto the ESP
+# alongside the standard limine + kernel + initrd layout.
+ESP_EXTRAS=
 
 # Fixed sentinel UUIDs — RFC 4122 format-valid (version=4,
 # variant=10xx in nibbles 3 and 4 of groups 3+4).  The c1ec1c1e
@@ -104,22 +111,29 @@ Usage: $PROGNAME [opts] ROOTFS_TARBALL
 Builds a bootable .qcow2 from a cloud-flavoured rootfs tarball.
 
 Options:
-  -c VARIANT  serial (default) or video
-  -o FILE     Output file name
-              (default: chimera-linux-<arch>-CLOUD-<date>-<variant>.qcow2)
-  -s SIZE     Image size (default: ${IMAGE_SIZE})
-  -C          Compress the qcow2 with zstd (default: sparse, no compression)
-  -h          Print this message.
+  -c VARIANT     serial (default) or video
+  -o FILE        Output file name
+                 (default: chimera-linux-<arch>-CLOUD-<date>-<variant>.qcow2)
+  -s SIZE        Image size (default: ${IMAGE_SIZE})
+  -C             Compress the qcow2 with zstd (default: sparse, no compression)
+  -x SRC[:DEST]  Drop SRC onto the ESP at /DEST (or /\$(basename SRC)
+                 if DEST omitted).  Repeatable.  Useful for staging
+                 a rescue UKI, an EFI shell override, or extra
+                 bootloader configs alongside the standard layout.
+                 Example: -x chimera-rescue-zfs.efi:EFI/rescue/rescue.efi
+  -h             Print this message.
 EOF
     exit "${1:-1}"
 }
 
-while getopts "c:o:s:Ch" opt; do
+while getopts "c:o:s:Cx:h" opt; do
     case "$opt" in
         c) VARIANT="$OPTARG";;
         o) OUT_FILE="$OPTARG";;
         s) IMAGE_SIZE="$OPTARG";;
         C) COMPRESS=1;;
+        x) ESP_EXTRAS="${ESP_EXTRAS}${OPTARG}
+";;
         h) usage 0;;
         *) usage;;
     esac
@@ -135,6 +149,21 @@ esac
 ROOTFS_TARBALL="$1"
 [ -n "$ROOTFS_TARBALL" ] || die "missing rootfs tarball argument"
 [ -r "$ROOTFS_TARBALL" ] || die "cannot read rootfs tarball: $ROOTFS_TARBALL"
+
+# Validate ESP extras early — fail before any disk operations if
+# any source is missing.  Each entry is "SRC[:DEST]"; split on the
+# first colon.  Catches the "you meant to drop the rescue UKI but
+# typo'd the path" case before mkfs.
+if [ -n "$ESP_EXTRAS" ]; then
+    printf '%s' "$ESP_EXTRAS" | while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        case "$line" in
+            *:*) src="${line%%:*}" ;;
+              *) src="$line" ;;
+        esac
+        [ -r "$src" ] || die "ESP extra source missing or unreadable: $src"
+    done || exit 1
+fi
 
 # ---- pre-flight ---------------------------------------------------
 
@@ -424,6 +453,34 @@ sed -e "s|@@KERNVER@@|${KERNVER}|g" \
 if [ -r ./shellx64.efi ]; then
     msg "Installing EFI shell to /shellx64.efi on ESP..."
     cp ./shellx64.efi "${ROOT_DIR}/boot/shellx64.efi"
+fi
+
+# ---- step 17b: operator-supplied ESP extras ----------------------
+#
+# Each `-x SRC[:DEST]` from the args lands at
+# ${ROOT_DIR}/boot/<DEST> (or basename SRC if DEST omitted).
+# Sources already validated in pre-flight; we still check
+# readability defensively in case something disappeared between
+# validation and now.  Subdirs in DEST are created automatically.
+
+if [ -n "$ESP_EXTRAS" ]; then
+    msg "Copying operator-supplied ESP extras..."
+    printf '%s' "$ESP_EXTRAS" | while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        case "$line" in
+            *:*) src="${line%%:*}"; dest="${line#*:}" ;;
+              *) src="$line"; dest=$(basename -- "$line") ;;
+        esac
+        [ -r "$src" ] || die "ESP extra source vanished: $src"
+        # Strip any leading '/' from dest — we're already rooted
+        # at the ESP via ${ROOT_DIR}/boot/.
+        dest="${dest#/}"
+        dest_full="${ROOT_DIR}/boot/${dest}"
+        dest_dir=$(dirname -- "$dest_full")
+        mkdir -p "$dest_dir" || die "mkdir -p $dest_dir failed"
+        cp "$src" "$dest_full" || die "cp $src -> $dest_full failed"
+        msg "  $src -> /${dest}"
+    done || exit 1
 fi
 
 # ---- step 18+19+20: unmount + detach ------------------------------
